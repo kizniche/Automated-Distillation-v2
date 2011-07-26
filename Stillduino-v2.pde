@@ -107,7 +107,7 @@ prog_char string_50[] PROGMEM = "If you think you're free, there's no escape pos
 prog_char string_51[] PROGMEM = "Only that in you which is me can hear what I'm saying. -Ram Dass/";
 prog_char string_52[] PROGMEM = "If you chase two rabbits, you will not catch either one. -Russian Proverb/";
 prog_char string_53[] PROGMEM = "The obstacle is the path. -Zen Proverb/";
-prog_char string_54[] PROGMEM = "Sometimes the questions are complicated and the answers are simple.  -Dr Seuss/";
+prog_char string_54[] PROGMEM = "Sometimes the questions are complicated and the answers are simple. -Dr Seuss/";
 prog_char string_55[] PROGMEM = "Things are entirely what they appear to be and behind them... there is nothing. -Sartre/";
 prog_char string_56[] PROGMEM = "Who is more foolish, the child afraid of the dark or the man afraid of the light? -Maurice Freehill/";
 prog_char string_57[] PROGMEM = "Eggs cannot be unscrambled. -American Proverb/";
@@ -545,7 +545,11 @@ void rand_quote()
       if (j+i>post+15) lcd.print(' ');
       else lcd.print(marquee[j+i]);
     }
-    delay(190);
+    delay(200);
+    if (digitalRead(buttonwakePin) == LOW) { // Button press skips the display of a quote
+      while (digitalRead(buttonwakePin) == LOW) { delay(1); }
+      i = post+18;
+    }
   }
 }
 
