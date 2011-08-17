@@ -32,22 +32,22 @@ static unsigned long countup_timer;    // Countdown to turn unit on
 static unsigned long relay_timer;      // = lWaitMillis, for timing in relay_control()
 static unsigned long lWaitMillis;      // Handle millis() rollover for long timing
 
-float tts = 0;            // Time til distillation start, in increments of 30 minutes
+float tts = 0;            // Time until distillation starts, in increments of 30 minutes
 float liters[] = {        // Store pre-defined volumes for menu display
   0, 3.0, 2.5, 1.5, 1.0};  
 
 int menu[] = {            // LCD menu [menu#, volume of water, timer, confirm ]
   1, 1, 1, 1 };
 
-long preset[5][2] = {     // in ms, (turn fan on after, turn heater & fan off after)
+long preset[5][2] = {     // in ms= {turn fan on after, turn heater & fan off after}
   {
     0, 0     }
   ,{
-    840000, 11700000  } // Preset 4: 3 liters cold water
+    1800000, 11700000  } // Preset 4: 3 liters cold water
   ,{
-    770000, 9750000   } // Preset 3: 2.5 liters cold water
+    1500000, 9750000   } // Preset 3: 2.5 liters cold water
   ,{
-    720000, 6300000   } // Preset 2: 1.5 liter cold water
+    900000, 6300000   } // Preset 2: 1.5 liter cold water
   ,{
     700000, 5900000   } // Preset 1: 1 liters cold water
 };
@@ -394,22 +394,22 @@ void display_LCD()
         lcd.print("PRESS TO CANCEL!");
       }
     }
-    else {  // When finished, display "Cooling Down" warning for 15 minutes, then sleep
-      if (((lWaitMillis-relay_timer)-preset[menu[1]][1]) < 900000) {
+    else {  // When finished, display "Cooling Down" warning for 30 minutes, then sleep
+      if (((lWaitMillis-relay_timer)-preset[menu[1]][1]) < 1800000) {
         if (rotary) {
           lcd.clear();
           lcd.setCursor(0,0);
-          lcd.print("- COOLING DOWN -");
+          lcd.print("-   FINISHED   -");
           lcd.setCursor(0, 1);
-          lcd.print("!  BE CAREFUL  !");
+          lcd.print("! CAUTION, HOT !");
           rotary = 0;
         }
         else if (!rotary) {
           lcd.clear();
           lcd.setCursor(0,0);
-          lcd.print("! COOLING DOWN !");
+          lcd.print("!   FINISHED   !");
           lcd.setCursor(0, 1);
-          lcd.print("-  BE CAREFUL  -");
+          lcd.print("- CAUTION, HOT -");
           rotary = 1;
         }
       }
