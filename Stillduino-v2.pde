@@ -1,42 +1,62 @@
-//
-// Stillduino v2 by Kyle Gabriel
-//
-// Automation of the water distillation process with the use of relays
-// controlling power to a condenser fan, heating element, and LCD backlight.
-// Input is gathered from a rotary encoder with a push-button, and feedback
-// is displayed as control menus or the current status on a 16x2 LCD
-//
 
-#include <avr/sleep.h>      // Put arduino into power-saving sleep mode
-#include <LiquidCrystal.h>  // Displays characters on a 16x2 LCD
-#include <QuadEncoder.h>    // Reads rotary encoder position
-#include <avr/pgmspace.h>   // Put quote strings in program space instead of var mem
+//   Stillduino v2
+//   Copyright 2011 Kyle Gabriel
 
-int debug = 0;  // Will Serial.print() be used?
+//   For the automation of a water distillation machine with the use of relays
+//   controlling power to a condenser fan, heating element, and LCD backlight.
+//   Input is gathered from a push-button rotary encoder.
+//   Feedback is displayed as control menus or the current status on a 16x2 LCD.
 
-LiquidCrystal lcd(8,9,10,11,12,13);  // Pins for LCD output
-QuadEncoder qe(4,5);                 // Pins for rotary encoder input
-int buttonwakePin = 2;               // Pin for button input (also for waking up)
-int lcd_RelayPin = 3;                // Pin for the LCD backlight relay
-int heat_RelayPin = 6;               // Pin for the heating coil relay
-int fan_RelayPin = 7;                // Pin for the condenser fan relay
+//   This program is free software: you can redistribute it and/or modify
+//   it under the terms of the GNU General Public License as published by
+//   the Free Software Foundation, either version 3 of the License, or
+//   (at your option) any later version.
 
-int qe1Move=0;       // Returned by QuadEncoder.h to read the state of the rotary encoder
-int wake = 1;        // Allows wakeUpNow() to be executed once at boot, once upon wake
-int relays_on = 0;   // Signal to turn the relays on or off
-int rotary = 1;      // Stores the current rotary dial position
-int rotaryLast = 1;  // Stores the last rotary dial position
+//   This program is distributed in the hope that it will be useful,
+//   but WITHOUT ANY WARRANTY; without even the implied warranty of
+//   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//   GNU General Public License for more details.
 
-static unsigned long countdown_timer;  // Countdown to turn unit off
-static unsigned long countup_timer;    // Countdown to turn unit on
-static unsigned long relay_timer;      // = lWaitMillis, for timing in relay_control()
-static unsigned long lWaitMillis;      // Handle millis() rollover for long timing
+//   You should have received a copy of the GNU General Public License
+//   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-float tts = 0;            // Time until distillation starts, in increments of 30 minutes
-float liters[] = {        // Store pre-defined volumes for menu display
+int debug = 0;
+
+#include <avr/sleep.h>      //  Changes arduino's power mode
+#include <LiquidCrystal.h>  //  Draws text on a 16x2 LCD
+#include <avr/pgmspace.h>   //  Write quotes to program space
+#include <EEPROM.h>         //  Reads/Writes EEPROM
+#include "EEPROMAnything.h" //  Keeps track of how much water has been distilled
+#include <QuadEncoder.h>    //  Detects change in the rotary encoder position
+                            //  QuadEncoder.h by Pedro Rodrigues (medecau@gmail.com), January 2010
+
+LiquidCrystal lcd(8,9,10,11,12,13);  //  Pins for LCD output
+QuadEncoder qe(4,5);                 //  Pins for rotary encoder
+int buttonwakePin = 2;               //  Pin for rotary encoder button
+int lcd_RelayPin = 3;                //  Pin for LCD backlight relay
+int heat_RelayPin = 6;               //  Pin for heating coil relay
+int fan_RelayPin = 7;                //  Pin for condenser fan relay
+
+int qe1Move = 0;     //  Rotary encoder position returned by QuadEncoder.h
+int wake = 1;        //  wakeUpNow() to be executed once at boot, once upon wake
+int relays_on = 0;   //  Signal to turn the relays on or off
+int rotary = 1;      //  Stores the current rotary dial position
+int rotaryLast = 1;  //  Stores the last rotary dial position
+
+int saveVolume = 0;  //  After successful distillation, is signal to write filterVolume to EEPROM
+int volume;          //  Integer of water.filterVolume that is passed to functions
+long tVolume;        //  Stores the total volume distilled. Must be reset with looped EEPROM.write()
+
+static unsigned long countdown_timer;  //  Countdown to turn unit off
+static unsigned long countup_timer;    //  Countdown to turn unit on
+static unsigned long relay_timer;      //  = lWaitMillis, for timing in relay_control()
+static unsigned long lWaitMillis;      //  Handle millis() rollover for long timing
+
+float tts = 0;            //  Time until distillation starts, in increments of 30 minutes
+float liters[] = {        //  Store pre-defined volumes for menu display
   0, 3.0, 2.5, 1.5, 1.0};  
 
-int menu[] = {            // LCD menu [menu#, volume of water, timer, confirm ]
+int menu[] = {            //  LCD menu [menu#, volume of water, timer, confirm ]
   1, 1, 1, 1 };
 
 long preset[5][2] = {     // Fill boiling chamber with cold water to above the heating element,
@@ -52,7 +72,10 @@ long preset[5][2] = {     // Fill boiling chamber with cold water to above the h
     700000, 5900000   }   // 1 liter
 };
 
-// Since only 1k mem is available to variables, long strings must be put into program memory
+/***********************************************************************************************
+ *** Since only 1k mem is available to variables, long strings must be put into program memory
+ ***********************************************************************************************/
+
 prog_char string_0[] PROGMEM = "Better than a thousand hollow words, is one word that brings peace. -Buddha/";
 prog_char string_1[] PROGMEM = "Tao in the world is like a river flowing home to the sea. -Tao Te Ching/";
 prog_char string_2[] PROGMEM = "Learn from yesterday, live for today, hope for tomorrow./";
@@ -122,8 +145,7 @@ prog_char string_65[] PROGMEM = "Don't look where you fall, but where you slippe
 prog_char string_66[] PROGMEM = "Dig the well before you are thirsty. -Chinese Proverb/";
 prog_char string_67[] PROGMEM = "When you throw dirt, you lose ground. -Texan Proverb/";
 
-// Create a 2-dimensional array with the above strings
-PROGMEM const char *quote[] =
+PROGMEM const char *quote[] = // Create a 2-dimensional array with the above strings
 {   
   string_0,
   string_1,
@@ -195,53 +217,75 @@ PROGMEM const char *quote[] =
   string_67,
 };
 
-// Set the maximum length of the progmem strings (remember to also change pre_marquee)
-char buffer[200];
+char buffer[200]; // Set the maximum length of the progmem strings (remember to also change pre_marquee)
+
+/***********************************************************************************************
+ *** Check for input from the rotary encoder (button press/knob turn), then take action.
+ ***********************************************************************************************/
 
 void ReadEncoder()
-{ // Check for a change in the rotary encoder (button press/knob turn), then take action
+{
   if ((long)(millis() - lWaitMillis) >= 0) lWaitMillis += 1000;  // prevent time rollover
-  if (qe1Move == '>' || qe1Move == '<') {
-    if (qe1Move == '<' && rotary <= 5) {   // If knob is turned, update rotary
-      if (rotary < 5) rotary++;
+  if (qe1Move == '>' || qe1Move == '<') // Update rotary if turn detected
+  {
+    if (qe1Move == '<' && rotary <= 6)
+    {
+      if (rotary < 6) rotary++;
       else rotary = 1;
     } 
-    else if (qe1Move == '>' && rotary >= 1) {
+    else if (qe1Move == '>' && rotary >= 1)
+    {
       if (rotary > 1) rotary--;
-      else rotary = 5;
+      else rotary = 6;
     }
     if (debug) status();       // Print status if debug is 1
     display_LCD();
   }
 
-  if (rotaryLast != rotary && menu[0] != 4) {  // If rotary changes, set mode & update LCD
-    if (menu[0] == 3) {
+  if (rotaryLast != rotary && menu[0] != 4) // If rotary changes, set mode & update LCD
+  {
+    if (menu[0] == 3)
+    {
       if (menu[3] == 2) menu[3] = 1;
       else if (menu[3] == 1) menu[3] = 2;
     } 
-    else if (menu[0] == 2) {
-      if (qe1Move == '>') { 
+    else if (menu[0] == 2)
+    {
+      if (qe1Move == '>')
+      { 
         tts = tts + 30;
         menu[2] = 0;
       }
-      else if (tts > 0) { 
+      else if (tts > 0)
+      { 
         tts = tts - 30;
         if (tts == 0) menu[2] = 1;
       }
     } 
-    else if (menu[0] == 1) {
+    else if (menu[0] == 1)
+    {
       menu[1] = rotary; 
     }
     rotaryLast = rotary;
     display_LCD();
   }
 
-  if (digitalRead(buttonwakePin) == LOW) {
-    while (digitalRead(buttonwakePin) == LOW) {  // Wait for button to go back to HIGH to continue
-      delay(1);                                  // Prevents weird results if the button is held down
+  if (digitalRead(buttonwakePin) == LOW)
+  {
+    while (digitalRead(buttonwakePin) == LOW) // Wait for button to go back to HIGH to continue
+    {                                         // Prevents weird results if the button is held down
+      delay(1);
     }
-    if (menu[0] == 1) {
-      if (menu[1] == 5) {
+    if (menu[0] == 1)
+    {
+      if (menu[1] == 5)
+      {
+        saveVolume = 2;
+        rotary = 1;
+        display_LCD();
+      } 
+      else if (menu[1] == 6)
+      {
         menu[0] = 1;
         menu[1] = 1;
         menu[2] = 1;
@@ -249,25 +293,30 @@ void ReadEncoder()
         tts = 0;
         delay(100);
         PowerDown();
-      } 
-      else {
+      }
+      else
+      {
         menu[0] = 2;
         display_LCD();
       }
     }
-    else if (menu[0] == 2) {
+    else if (menu[0] == 2)
+    {
       menu[0] = 3;
       menu[2] = 1;
       display_LCD();
     }
-    else if (menu[0] == 3) {
-      if (menu[3] == 1) {
+    else if (menu[0] == 3)
+    {
+      if (menu[3] == 1)
+      {
         menu[0] = 4;
         relays_on = 1;
         countup_timer = (tts*60000) + lWaitMillis;
         relay_timer = lWaitMillis;
       }
-      else if (menu[3] == 2) {
+      else if (menu[3] == 2)
+      {
         menu[0] = 1;
         menu[1] = 1;
         menu[2] = 1;
@@ -278,7 +327,8 @@ void ReadEncoder()
       }
       display_LCD();
     }
-    else if (menu[0] == 4) {
+    else if (menu[0] == 4)
+    {
       menu[0] = 1;
       menu[1] = 1;
       menu[2] = 1;
@@ -291,13 +341,19 @@ void ReadEncoder()
   }
 }
 
+/***********************************************************************************************
+ *** Display the current menu on the LCD.
+ ***********************************************************************************************/
+
 void display_LCD()
-{ // Display the current menu on the LCD
-  switch (menu[0]) {
+{
+  switch (menu[0])
+  {
   case 1:             // Receive input of quantity of water to distill
     lcd.clear();
     lcd.setCursor(0,0);
-    switch (menu[1]) {
+    switch (menu[1])
+    {
     case 1:
       lcd.print("Amount of water:");
       lcd.setCursor(3,1);
@@ -319,9 +375,16 @@ void display_LCD()
       lcd.print("1.0 Liters");
       break;
     case 5:
-      lcd.print("   POWER DOWN!");
+      lcd.print("    L Distilled");
+      lcd.setCursor(0,0);
+      lcd.print(volume);
       lcd.setCursor(0,1);
-      lcd.print("   SLEEP MODE!");
+      lcd.print(" PRESS TO RESET");
+      break;
+    case 6:
+      lcd.print("    PRESS TO");
+      lcd.setCursor(0,1);
+      lcd.print("   POWER DOWN");
       break;
     }
     break;
@@ -329,7 +392,8 @@ void display_LCD()
     lcd.clear();
     lcd.setCursor(0,0);
     lcd.print(" Time to Start?");
-    switch (menu[2]) {
+    switch (menu[2])
+    {
     case 1:
       lcd.setCursor(7,1);
       lcd.print("NOW");
@@ -343,7 +407,8 @@ void display_LCD()
     break;
   case 3:             // Receive input to confirm the last two options
     lcd.clear();
-    if (tts != 0) {
+    if (tts != 0)
+    {
       lcd.setCursor(4,0);
       lcd.print("L in     Hrs");
       lcd.setCursor(0,0);
@@ -351,7 +416,8 @@ void display_LCD()
       lcd.setCursor(9,0);
       lcd.print((tts/60),1);
     }
-    else {
+    else
+    {
       lcd.setCursor(7,0);
       lcd.print("L, NOW");
       lcd.setCursor(3,0);
@@ -359,7 +425,8 @@ void display_LCD()
     }
     lcd.setCursor(0, 1);
     lcd.print("  CONFIRM:");
-    switch (menu[3]) {
+    switch (menu[3])
+    {
     case 1:
       lcd.setCursor(11,1);
       lcd.print("YES");
@@ -370,10 +437,12 @@ void display_LCD()
       break;
     }
     break;
-  case 4:             // If confirmed, display quantity of water and countdown to start or finish
-    if (relays_on) {
+  case 4:             // Display quantity of water and countdown to start or finish
+    if (relays_on)
+    {
       lcd.clear();
-      if (countup_timer > lWaitMillis) {
+      if (countup_timer > lWaitMillis)
+      {
         lcd.setCursor(4,0);
         lcd.print("Min To Start");
         lcd.setCursor(0,0);
@@ -383,7 +452,8 @@ void display_LCD()
         lcd.setCursor(0,1);
         lcd.print(liters[menu[1]],1);
       } 
-      else {
+      else
+      {
         lcd.setCursor(0,0);
         lcd.print("    L     MinRem");
         lcd.setCursor(0,0);
@@ -394,9 +464,12 @@ void display_LCD()
         lcd.print("PRESS TO CANCEL!");
       }
     }
-    else {  // When finished, display "Cooling Down" warning for 30 minutes, then sleep
-      if (((lWaitMillis-relay_timer)-preset[menu[1]][1]) < 1800000) {
-        if (rotary) {
+    else  // When finished, display "Cooling Down" warning for 30 minutes, then sleep
+    {
+      if (((lWaitMillis-relay_timer)-preset[menu[1]][1]) < 1800000)
+      {
+        if (rotary)
+        {
           lcd.clear();
           lcd.setCursor(0,0);
           lcd.print("-   FINISHED   -");
@@ -404,7 +477,8 @@ void display_LCD()
           lcd.print("! CAUTION, HOT !");
           rotary = 0;
         }
-        else if (!rotary) {
+        else if (!rotary)
+        {
           lcd.clear();
           lcd.setCursor(0,0);
           lcd.print("!   FINISHED   !");
@@ -427,53 +501,71 @@ void display_LCD()
   }
 }
 
+/***********************************************************************************************
+ *** Determine if fan and heat relay should be on or off / turn each on or off
+ ***********************************************************************************************/
+
 void relay_control()
-{ // Determine if fan or heat relay should be on/off
-  if (relays_on == 1) {
-    if (countup_timer > lWaitMillis) { 
+{
+  if (relays_on == 1)
+  {
+    if (countup_timer > lWaitMillis)
+    { 
       relay_timer = lWaitMillis; 
     }
-    else {
-      // Turn fan on after heater has heated the water x seconds (saves power)
-      if (lWaitMillis-relay_timer >= preset[menu[1]][0]) {
+    else
+    {
+      if (lWaitMillis-relay_timer >= preset[menu[1]][0]) // Turn fan on after water is heated (saves power)
+      {
         digitalWrite(fan_RelayPin, HIGH);
       }
-      // Turn heater on after relay_timer is set
-      if (lWaitMillis-relay_timer > 0) {
+      if (lWaitMillis-relay_timer > 0) // Turn heater on after relay_timer is set
+      {
         digitalWrite(heat_RelayPin, HIGH);
       }
-      // Turn all pins off after time has passed to distil selected volume
-      if (lWaitMillis-relay_timer > preset[menu[1]][1]) {
+      if (lWaitMillis-relay_timer > preset[menu[1]][1]) // Turn all pins off after time has passed to distil selected volume
+      {
         digitalWrite(heat_RelayPin, LOW);
         digitalWrite(fan_RelayPin, LOW);
         relays_on = 0;
+        saveVolume = 1;
       }
     }
   }
-  else {  // Power both relays OFF if relays_on is not set to 1
+  else // Power both relays OFF if relays_on is not set to 1
+  {
     digitalWrite(heat_RelayPin, LOW);
     digitalWrite(fan_RelayPin, LOW);
   }
 }
 
+/***********************************************************************************************
+ *** Put the arduino to sleep until the button is pressed
+ ***********************************************************************************************/
+
 void PowerDown()
-{ // Put the arduino to sleep until button-press
+{
   lcd.clear();
   digitalWrite(lcd_RelayPin, LOW);
   set_sleep_mode(SLEEP_MODE_PWR_DOWN); 
   sleep_enable();                     // Enable the sleep bit in the mcucr register
   attachInterrupt(0,wakeUpNow, LOW);  // Use interrupt 0 (pin 2) and wake when pin 2 = LOW 
   sleep_mode();                       // Put to sleep.
-  // Where program continues after waking
+  // Where program continues after waking...
   sleep_disable();                    // First thing after waking from sleep, disable sleep
   detachInterrupt(0);                 // disables interrupt 0 on pin 2 so button can be used
   digitalWrite(lcd_RelayPin, HIGH);
   wake = 1;
 }
 
+/***********************************************************************************************
+ *** 
+ ***********************************************************************************************/
+
 void wakeUpNow()
 { // Run when plugged in and after waking from sleep
-  while (digitalRead(buttonwakePin) == LOW) {
+  while (digitalRead(buttonwakePin) == LOW)
+  {
     delay(1);
   }
   lcd.clear();
@@ -484,78 +576,124 @@ void wakeUpNow()
   digitalWrite(fan_RelayPin, HIGH);   // Fan test start: turn fan on for a few seconds
   delay(4000);
   rand_quote();
-  digitalWrite(fan_RelayPin, LOW);    // Fan test end
+  digitalWrite(fan_RelayPin, LOW);    // Fan test 
+  
+  if (volume >= 113) // If more than 113 liters have been distilled with the current filter,
+  {                  // notify that it should be changed and the counter reset.
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print(">113 L Distilled");
+    lcd.setCursor(0,1);
+    lcd.print(" Replace Filter");
+    delay(3000);
+    lcd.setCursor(0,1);
+    lcd.print("& Reset Counter");
+    delay(3000);
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("    Press to");
+    lcd.setCursor(0,1);
+    lcd.print("  Acknowledge.");
+    int confirm = 1;
+    while (confirm) // Must press to confirm the filter needs changing before continuing
+    {
+      while (digitalRead(buttonwakePin) == LOW)
+      {
+        delay(1);
+        confirm = 0;
+      }
+    }
+  }
   display_LCD();
 }
 
-unsigned long seedOut(unsigned int noOfBits) 
-{ // "More" Random by David Pankhurst, http://www.utopiamechanicus.com/77/better-arduino-random-numbers/
-  unsigned long seed=0, limit=99;
-  int bit0=0, bit1=0;
-  while (noOfBits--)
-  {
-    for (int i=0;i<limit;++i)
-    {
-      bit0=analogRead(0)&1;
-      bit1=analogRead(0)&1;
-      if (bit1!=bit0)
-        break;
-    }
-    seed = (seed<<1) | bit1;
-  }
-  return seed; // return value with 'noOfBits' random bits set
-}
+/***********************************************************************************************
+ *** Collect random number, then select and display that quote
+ ***********************************************************************************************/
 
 void rand_quote()
-{ // Collect random number, then select and display that quote
+{
   int quoteNum;
   unsigned long seed=seedOut(31);
   randomSeed(seed); // The more random data for the seed
   quoteNum = random(0,68);
   strcpy_P(buffer, (char*)pgm_read_word(&(quote[quoteNum])));  // Copy quote from program memory to buffer[]
-
   int post;
   char pre_marq[216];
-
-  for (post=0;post<201;post++) {  // Find how long the quote is
+  for (post=0;post<201;post++)  // Find how long the quote is
+  {
     if (buffer[post] == '/') break;
     else pre_marq[post] = buffer[post];
   }
-
   char marquee[post+16];
-
-  for (int i=0;i<post+16;i++) {  // Add 16 spaces to the beginning of the quote
+  for (int i=0;i<post+16;i++) // Add 16 spaces to the beginning of the quote
+  {
     if (i<16) marquee[i] = ' ';
-    else {
+    else
+    {
       marquee[i] = buffer[i-16];
     }
   }
-
   int end = 0;
   int e = 0;
-
-  for (int i=0;i<post+18;i++) {  // Scroll the quote across the LCD from right to left,
-    if (end) e++;                // inserting 16 spaces to the right of the quote
-    if (e > 16) break;           // before finishing the function
+  for (int i=0;i<post+18;i++) // Scroll the quote across the LCD from right to left, inserting 16
+  {                           // spaces to the right of the quote before finishing the function
+    if (end) e++;
+    if (e > 16) break;
     lcd.setCursor(0,0);
-    for (int j=0;j<16;j++) {
-      if (marquee[j+i] == '/') {
+    for (int j=0;j<16;j++)
+    {
+      if (marquee[j+i] == '/')
+      {
         end=1;
       }
       if (j+i>post+15) lcd.print(' ');
       else lcd.print(marquee[j+i]);
     }
     delay(200);
-    if (digitalRead(buttonwakePin) == LOW) { // Button press skips the display of a quote
-      while (digitalRead(buttonwakePin) == LOW) { delay(1); }
+    if (digitalRead(buttonwakePin) == LOW) // Button press skips the display of a quote
+    {
+      while (digitalRead(buttonwakePin) == LOW)
+      {
+        delay(1);
+      }
       i = post+18;
     }
   }
 }
 
+/***********************************************************************************************
+ *** Random by David Pankhurst, http://www.utopiamechanicus.com/77/better-arduino-random-numbers
+ ***********************************************************************************************/
+
+unsigned long seedOut(unsigned int noOfBits) 
+{
+  unsigned long seed=0, limit=99;
+  int bit0=0, bit1=0;
+  while (noOfBits--)
+  {
+    for (int i=0; i<limit; ++i)
+    {
+      bit0=analogRead(0)&1;
+      bit1=analogRead(0)&1;
+      if (bit1 != bit0) break;
+    }
+    seed = (seed<<1) | bit1;
+  }
+  return seed; // return value with 'noOfBits' random bits set
+}
+
+/***********************************************************************************************
+ *** Print status for debugging/logging when debug=1 
+ ***********************************************************************************************/
+
 void status()
-{ // Print status for debugging/logging
-  Serial.print("relay_timer: ");
+{
+  Serial.print("  filterVolume: ");
+  Serial.print(volume);
+  Serial.print("  totalVolume: ");
+  Serial.print(tVolume);
+  Serial.print(" relay_timer: ");
   Serial.print(relay_timer);
   Serial.print("  rotary: ");
   Serial.print(rotary);
@@ -575,13 +713,21 @@ void status()
   Serial.print(preset[menu[1]][0]);
   Serial.print(" sec  Both off > ");
   Serial.print(preset[menu[1]][1]);
-  Serial.print(" sec");
+  Serial.print(" sec.");
   Serial.println();
 }
 
+struct config_t // Variables read/written to EEPROM
+{
+    float filterVolume;
+    long totalVolume;
+} water;
+
 void setup()
 {
-  if (debug) {                        // Bring up serial communication if debugging
+  EEPROM_readAnything(0, water);      // Read filterVolume from EEPROM
+  if (debug)                          // Bring up serial communication if debugging
+  {
     Serial.begin(9600);
     Serial.println("Ready to begin");
   }
@@ -596,21 +742,46 @@ void setup()
 
 void loop()
 {
-  if (wake) wakeUpNow(); // Run once per power up
+  EEPROM_readAnything(0, water);
+  volume = water.filterVolume;  // for global variable recognition
+  tVolume = water.totalVolume;  // holds volume total for life of distiller
+  
+  if (wake) wakeUpNow();        // Run once per power up
   wake = 0;
 
-  qe1Move = qe.hb();     // Monitor rotary encoder for rotation
-  ReadEncoder();         // Act if rotary encoder rotates
-  relay_control();       // Turn Fan/Heater relays ON/OFF
-
-  if (menu[0] == 4) {
-    // Update the LCD every minute if distillation underway
-    if (relays_on && (lWaitMillis-countdown_timer) >= 60000) {
+  qe1Move = qe.hb();            // Monitor rotary encoder for rotation
+  ReadEncoder();                // Act if rotary encoder rotates
+  relay_control();              // Turn Fan/Heater relays ON/OFF
+  
+  if (saveVolume == 1) // Update amount recetly distilled to totals  
+  {
+    if (water.filterVolume)
+    {
+      water.filterVolume = water.filterVolume + liters[menu[1]];
+      water.totalVolume = water.totalVolume + liters[menu[1]];
+    } else
+    {
+      water.filterVolume = liters[menu[1]];
+      water.totalVolume = water.totalVolume + liters[menu[1]];
+    }
+    EEPROM_writeAnything(0, water);
+    saveVolume = 0;
+  }
+  else if (saveVolume == 2)
+  {
+    water.filterVolume = 0;
+    EEPROM_writeAnything(0, water);
+    saveVolume = 0;
+  }
+  if (menu[0] == 4) // Update LCD every minute if distilling / every second if cooling down
+  {
+    if (relays_on && (lWaitMillis-countdown_timer) >= 60000) 
+    {
       display_LCD();
       countdown_timer = lWaitMillis;
     }
-    // Update the LCD every second if cooling down
-    if (!relays_on && (lWaitMillis-countdown_timer) >= 1000) {
+    if (!relays_on && (lWaitMillis-countdown_timer) >= 1000)
+    {
       display_LCD();
       countdown_timer = lWaitMillis;
     }
