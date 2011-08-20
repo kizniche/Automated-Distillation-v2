@@ -39,17 +39,17 @@ float liters[] = {        // Store pre-defined volumes for menu display
 int menu[] = {            // LCD menu [menu#, volume of water, timer, confirm ]
   1, 1, 1, 1 };
 
-long preset[5][2] = {     // in ms= {turn fan on after, turn heater & fan off after}
-  {
-    0, 0     }
+long preset[5][2] = {     // Fill boiling chamber with cold water to above the heating element,
+  {                       // then add 1, 1.5, 2.5, or 3 liters of water to the boiling chamber.
+    0, 0     }            // This amount will be distilled, leaving the heating element submerged.
+  ,{                      // {turn fan on after, turn heater & fan off after} in miliseconds
+    1800000, 12840000  }  // 3 liters
   ,{
-    1800000, 11700000  } // Preset 4: 3 liters cold water
+    1500000, 11000000   } // 2.5 liters
   ,{
-    1500000, 9750000   } // Preset 3: 2.5 liters cold water
+    900000, 6300000   }   // 1.5 liters
   ,{
-    900000, 6300000   } // Preset 2: 1.5 liter cold water
-  ,{
-    700000, 5900000   } // Preset 1: 1 liters cold water
+    700000, 5900000   }   // 1 liter
 };
 
 // Since only 1k mem is available to variables, long strings must be put into program memory
